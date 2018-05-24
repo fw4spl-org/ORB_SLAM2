@@ -48,7 +48,8 @@ LoopClosing::LoopClosing(Map *pMap, KeyFrameDatabase *pDB, ORBVocabulary *pVoc, 
     mbStopGBA(false),
     mpThreadGBA(nullptr),
     mbFixScale(bFixScale),
-    mnFullBAIdx(0)
+    mnFullBAIdx(0),
+    mbStopped(false)
 {
     mnCovisibilityConsistencyTh = 3;
 }
