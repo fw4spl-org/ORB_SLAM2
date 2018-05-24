@@ -21,32 +21,41 @@
 
 #include "Tracking.h"
 
-#include<opencv2/core/core.hpp>
-#include<opencv2/features2d/features2d.hpp>
+#include <opencv2/core/core.hpp>
+#include <opencv2/features2d/features2d.hpp>
 
-#include"ORBmatcher.h"
-#include"FrameDrawer.h"
-#include"Converter.h"
-#include"Map.h"
-#include"Initializer.h"
+#include "ORBmatcher.h"
+#include "Converter.h"
+#include "Map.h"
+#include "Initializer.h"
 
-#include"Optimizer.h"
-#include"PnPsolver.h"
+#include "Optimizer.h"
+#include "PnPsolver.h"
 
-#include<iostream>
+#include <iostream>
 
-#include<mutex>
-
+#include <mutex>
+#include <chrono>
+#include <thread>
 
 using namespace std;
 
 namespace ORB_SLAM2
 {
 
-Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer, MapDrawer *pMapDrawer, Map *pMap, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor):
-    mState(NO_IMAGES_YET), mSensor(sensor), mbOnlyTracking(false), mbVO(false), mpORBVocabulary(pVoc),
-    mpKeyFrameDB(pKFDB), mpInitializer(static_cast<Initializer*>(NULL)), mpSystem(pSys), mpViewer(NULL),
-    mpFrameDrawer(pFrameDrawer), mpMapDrawer(pMapDrawer), mpMap(pMap), mnLastRelocFrameId(0)
+Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, Map *pMap, KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, bool bReuseMap):
+    mState(NO_IMAGES_YET),
+    mbOnlyTracking(false),
+    mbVO(false),
+    mpORBVocabulary(pVoc),
+    mpKeyFrameDB(pKFDB),
+    mpInitializer(static_cast<Initializer*>(nullptr)),
+    mpSystem(pSys),
+    mpMap(pMap),
+    mnLastRelocFrameId(0),
+    mpORBextractorLeft(nullptr),
+    mpORBextractorRight(nullptr),
+    mpIniORBextractor(nullptr)
 {
     // Load camera parameters from settings file
 
@@ -145,6 +154,164 @@ Tracking::Tracking(System *pSys, ORBVocabulary* pVoc, FrameDrawer *pFrameDrawer,
         else
             mDepthMapFactor = 1.0f/mDepthMapFactor;
     }
+    if (bReuseMap)
+        mState = LOST;
+}
+
+Tracking::Tracking(System *pSys, ORBVocabulary *pVoc, Map *pMap, KeyFrameDatabase *pKFDB,
+                   const Camera &camParams, const OrbParameters &orbParams,
+                   const int sensor, bool bReuseMap):
+    mState(NO_IMAGES_YET),
+    mSensor(sensor),
+    mbOnlyTracking(false),
+    mbVO(false),
+    mpORBVocabulary(pVoc),
+    mpKeyFrameDB(pKFDB),
+    mpInitializer(static_cast<Initializer*>(nullptr)),
+    mpSystem(pSys),
+    mpMap(pMap),
+    mnLastRelocFrameId(0),
+    mpORBextractorLeft(nullptr),
+    mpORBextractorRight(nullptr),
+    mpIniORBextractor(nullptr)
+{
+    //Load parameters
+    float fx = camParams.m_fx;
+    float fy = camParams.m_fy;
+    float cx = camParams.m_cx;
+    float cy = camParams.m_cy;
+
+    cv::Mat K = cv::Mat::eye(3,3,CV_32F);
+    K.at<float>(0,0) = fx;
+    K.at<float>(1,1) = fy;
+    K.at<float>(0,2) = cx;
+    K.at<float>(1,2) = cy;
+    K.copyTo(mK);
+
+    cv::Mat DistCoef(4,1,CV_32F);
+    DistCoef.at<float>(0) = camParams.m_k1;
+    DistCoef.at<float>(1) = camParams.m_k2;
+    DistCoef.at<float>(2) = camParams.m_p1;
+    DistCoef.at<float>(3) = camParams.m_p2;
+    const float k3 = camParams.m_k3;
+    if(k3!=0)
+    {
+        DistCoef.resize(5);
+        DistCoef.at<float>(4) = k3;
+    }
+    DistCoef.copyTo(mDistCoef);
+
+    mbf = camParams.m_bf;
+
+    float fps = camParams.m_fps;
+
+    if(fps==0)
+        fps=30;
+
+    // Max/Min Frames to insert keyframes and to check relocalisation
+    mMinFrames = 0;
+    mMaxFrames = fps;
+
+    cout << endl << "Camera Parameters: " << endl;
+    cout << "- fx: " << fx << endl;
+    cout << "- fy: " << fy << endl;
+    cout << "- cx: " << cx << endl;
+    cout << "- cy: " << cy << endl;
+    cout << "- k1: " << DistCoef.at<float>(0) << endl;
+    cout << "- k2: " << DistCoef.at<float>(1) << endl;
+    if(DistCoef.rows==5)
+        cout << "- k3: " << DistCoef.at<float>(4) << endl;
+    cout << "- p1: " << DistCoef.at<float>(2) << endl;
+    cout << "- p2: " << DistCoef.at<float>(3) << endl;
+    cout << "- fps: " << fps << endl;
+
+
+    int nRGB = camParams.m_rgb;
+    mbRGB = nRGB;
+
+    if(mbRGB)
+        cout << "- color order: RGB (ignored if grayscale)" << endl;
+    else
+        cout << "- color order: BGR (ignored if grayscale)" << endl;
+
+    // Load ORB parameters
+
+    int nFeatures = orbParams.m_nFeatures;
+    float fScaleFactor = orbParams.m_scaleFactor;
+    int nLevels = orbParams.m_nLevels;
+    int fIniThFAST = orbParams.m_iniThFAST;
+    int fMinThFAST = orbParams.m_minThFAST;
+
+    mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+
+    if(mSensor==System::STEREO)
+        mpORBextractorRight = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+
+    if(mSensor==System::MONOCULAR)
+        mpIniORBextractor = new ORBextractor(2*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+
+    cout << endl  << "ORB Extractor Parameters: " << endl;
+    cout << "- Number of Features: " << nFeatures << endl;
+    cout << "- Scale Levels: " << nLevels << endl;
+    cout << "- Scale Factor: " << fScaleFactor << endl;
+    cout << "- Initial Fast Threshold: " << fIniThFAST << endl;
+    cout << "- Minimum Fast Threshold: " << fMinThFAST << endl;
+
+    if(mSensor==System::STEREO || mSensor==System::RGBD)
+    {
+        mThDepth = mbf*(float)camParams.m_thDepth/fx;
+        cout << endl << "Depth Threshold (Close/Far Points): " << mThDepth << endl;
+    }
+
+    if(mSensor==System::RGBD)
+    {
+        mDepthMapFactor = camParams.m_depthMapFactor;
+        if(fabs(mDepthMapFactor)<1e-5)
+            mDepthMapFactor=1;
+        else
+            mDepthMapFactor = 1.0f/mDepthMapFactor;
+    }
+    if (bReuseMap)
+        mState = LOST;
+}
+
+Tracking::~Tracking()
+{
+    delete mpORBextractorLeft;
+    delete mpORBextractorRight;
+    delete mpIniORBextractor;
+    delete mpInitializer;
+}
+
+void Tracking::setOrbParameters(const OrbParameters &orbParams)
+{
+
+    // Load ORB parameters
+
+    int nFeatures = orbParams.m_nFeatures;
+    float fScaleFactor = orbParams.m_scaleFactor;
+    int nLevels = orbParams.m_nLevels;
+    int fIniThFAST = orbParams.m_iniThFAST;
+    int fMinThFAST = orbParams.m_minThFAST;
+
+    delete mpORBextractorLeft;
+    delete mpORBextractorRight;
+    delete mpIniORBextractor;
+
+    mpORBextractorLeft = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+
+    if(mSensor==System::STEREO)
+        mpORBextractorRight = new ORBextractor(nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+
+    if(mSensor==System::MONOCULAR)
+        mpIniORBextractor = new ORBextractor(2*nFeatures,fScaleFactor,nLevels,fIniThFAST,fMinThFAST);
+
+    cout << endl  << "ORB Extractor Parameters: " << endl;
+    cout << "- Number of Features: " << nFeatures << endl;
+    cout << "- Scale Levels: " << nLevels << endl;
+    cout << "- Scale Factor: " << fScaleFactor << endl;
+    cout << "- Initial Fast Threshold: " << fIniThFAST << endl;
+    cout << "- Minimum Fast Threshold: " << fMinThFAST << endl;
 
 }
 
@@ -157,12 +324,6 @@ void Tracking::SetLoopClosing(LoopClosing *pLoopClosing)
 {
     mpLoopClosing=pLoopClosing;
 }
-
-void Tracking::SetViewer(Viewer *pViewer)
-{
-    mpViewer=pViewer;
-}
-
 
 cv::Mat Tracking::GrabImageStereo(const cv::Mat &imRectLeft, const cv::Mat &imRectRight, const double &timestamp)
 {
@@ -234,7 +395,6 @@ cv::Mat Tracking::GrabImageRGBD(const cv::Mat &imRGB,const cv::Mat &imD, const d
     return mCurrentFrame.mTcw.clone();
 }
 
-
 cv::Mat Tracking::GrabImageMonocular(const cv::Mat &im, const double &timestamp)
 {
     mImGray = im;
@@ -282,8 +442,6 @@ void Tracking::Track()
             StereoInitialization();
         else
             MonocularInitialization();
-
-        mpFrameDrawer->Update(this);
 
         if(mState!=OK)
             return;
@@ -414,9 +572,6 @@ void Tracking::Track()
         else
             mState=LOST;
 
-        // Update drawer
-        mpFrameDrawer->Update(this);
-
         // If tracking were good, check if we insert a keyframe
         if(bOK)
         {
@@ -430,8 +585,6 @@ void Tracking::Track()
             }
             else
                 mVelocity = cv::Mat();
-
-            mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
 
             // Clean VO matches
             for(int i=0; i<mCurrentFrame.N; i++)
@@ -497,7 +650,8 @@ void Tracking::Track()
     else
     {
         // This can happen if tracking is lost
-        mlRelativeFramePoses.push_back(mlRelativeFramePoses.back());
+        if (!mlRelativeFramePoses.empty())
+            mlRelativeFramePoses.push_back(mlRelativeFramePoses.back());
         mlpReferences.push_back(mlpReferences.back());
         mlFrameTimes.push_back(mlFrameTimes.back());
         mlbLost.push_back(mState==LOST);
@@ -553,8 +707,6 @@ void Tracking::StereoInitialization()
         mpMap->SetReferenceMapPoints(mvpLocalMapPoints);
 
         mpMap->mvpKeyFrameOrigins.push_back(pKFini);
-
-        mpMapDrawer->SetCurrentCameraPose(mCurrentFrame.mTcw);
 
         mState=OK;
     }
@@ -728,9 +880,6 @@ void Tracking::CreateInitialMapMonocular()
     mLastFrame = Frame(mCurrentFrame);
 
     mpMap->SetReferenceMapPoints(mvpLocalMapPoints);
-
-    mpMapDrawer->SetCurrentCameraPose(pKFcur->GetPose());
-
     mpMap->mvpKeyFrameOrigins.push_back(pKFini);
 
     mState=OK;
@@ -916,7 +1065,7 @@ bool Tracking::TrackWithMotionModel()
             else if(mCurrentFrame.mvpMapPoints[i]->Observations()>0)
                 nmatchesMap++;
         }
-    }    
+    }
 
     if(mbOnlyTracking)
     {
@@ -980,7 +1129,7 @@ bool Tracking::NeedNewKeyFrame()
         return false;
 
     // If Local Mapping is freezed by a Loop Closure do not insert keyframes
-    if(mpLocalMapper->isStopped() || mpLocalMapper->stopRequested())
+    if(mpLocalMapper->isStopped())
         return false;
 
     const int nKFs = mpMap->KeyFramesInMap();
@@ -1491,6 +1640,7 @@ bool Tracking::Relocalization()
 
     if(!bMatch)
     {
+        mCurrentFrame.mTcw = cv::Mat::zeros(0, 0, CV_32F); // set mTcw back to empty if relocation is failed
         return false;
     }
     else
@@ -1503,23 +1653,14 @@ bool Tracking::Relocalization()
 
 void Tracking::Reset()
 {
-
-    cout << "System Reseting" << endl;
-    if(mpViewer)
-    {
-        mpViewer->RequestStop();
-        while(!mpViewer->isStopped())
-            usleep(3000);
-    }
-
     // Reset Local Mapping
-    cout << "Reseting Local Mapper...";
-    mpLocalMapper->RequestReset();
+    cout << "Reseting Local Mapper..." << endl;
+    mpLocalMapper->reset();
     cout << " done" << endl;
 
     // Reset Loop Closing
-    cout << "Reseting Loop Closing...";
-    mpLoopClosing->RequestReset();
+    cout << "Reseting Loop Closing..." << endl;
+    mpLoopClosing->reset();
     cout << " done" << endl;
 
     // Clear BoW Database
@@ -1544,9 +1685,6 @@ void Tracking::Reset()
     mlpReferences.clear();
     mlFrameTimes.clear();
     mlbLost.clear();
-
-    if(mpViewer)
-        mpViewer->Release();
 }
 
 void Tracking::ChangeCalibration(const string &strSettingPath)
@@ -1582,11 +1720,41 @@ void Tracking::ChangeCalibration(const string &strSettingPath)
     Frame::mbInitialComputations = true;
 }
 
+void Tracking::ChangeCalibration(const Camera &camParams)
+{
+    float fx = camParams.m_fx;
+    float fy = camParams.m_fy;
+    float cx = camParams.m_cx;
+    float cy = camParams.m_cy;
+
+    cv::Mat K = cv::Mat::eye(3,3,CV_32F);
+    K.at<float>(0,0) = fx;
+    K.at<float>(1,1) = fy;
+    K.at<float>(0,2) = cx;
+    K.at<float>(1,2) = cy;
+    K.copyTo(mK);
+
+    cv::Mat DistCoef(4,1,CV_32F);
+    DistCoef.at<float>(0) = camParams.m_k1;
+    DistCoef.at<float>(1) = camParams.m_k2;
+    DistCoef.at<float>(2) = camParams.m_p1;
+    DistCoef.at<float>(3) = camParams.m_p2;
+    const float k3 = camParams.m_k3;
+    if(k3!=0)
+    {
+        DistCoef.resize(5);
+        DistCoef.at<float>(4) = k3;
+    }
+    DistCoef.copyTo(mDistCoef);
+
+    mbf = camParams.m_bf;
+
+    Frame::mbInitialComputations = true;
+}
+
 void Tracking::InformOnlyTracking(const bool &flag)
 {
     mbOnlyTracking = flag;
 }
-
-
 
 } //namespace ORB_SLAM

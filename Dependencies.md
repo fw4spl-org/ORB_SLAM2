@@ -27,9 +27,6 @@ This is a modified version of [g2o](https://github.com/RainerKuemmerle/g2o). All
 
 #####Library dependencies 
 
-* **Pangolin (visualization and user interface)**.
-[MIT license](https://en.wikipedia.org/wiki/MIT_License).
-
 * **OpenCV**.
 BSD license.
 
@@ -38,7 +35,4 @@ For versions greater than 3.1.1 is MPL2, earlier versions are LGPLv3.
 
 * **ROS (Optional, only if you build Examples/ROS)**.
 BSD license. In the manifest.xml the only declared package dependencies are roscpp, tf, sensor_msgs, image_transport, cv_bridge, which are all BSD licensed.
-
-
-
 

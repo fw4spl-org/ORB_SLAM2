@@ -22,19 +22,22 @@
 #ifndef SYSTEM_H
 #define SYSTEM_H
 
-#include<string>
-#include<thread>
-#include<opencv2/core/core.hpp>
+#include <string>
+#include <thread>
+#include <opencv2/core/core.hpp>
 
 #include "Tracking.h"
-#include "FrameDrawer.h"
-#include "MapDrawer.h"
 #include "Map.h"
 #include "LocalMapping.h"
 #include "LoopClosing.h"
 #include "KeyFrameDatabase.h"
 #include "ORBVocabulary.h"
-#include "Viewer.h"
+#include "orb_slam2_export.h"
+#include "Utils.h"
+
+#include "BoostArchiver.h"
+// for map file io
+#include <fstream>
 
 namespace ORB_SLAM2
 {
@@ -46,7 +49,8 @@ class Tracking;
 class LocalMapping;
 class LoopClosing;
 
-class System
+
+class ORB_SLAM2_EXPORT System
 {
 public:
     // Input sensor
@@ -59,7 +63,16 @@ public:
 public:
 
     // Initialize the SLAM system. It launches the Local Mapping, Loop Closing and Viewer threads.
-    System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor, const bool bUseViewer = true);
+    System(const string &strVocFile, const string &strSettingsFile, const eSensor sensor);
+
+    //Initialize the SLAM system without using settings file. It launches the Local Mapping, Loop Closing and Viewer threads.
+    System(ORBVocabulary *voc, const Camera& camParams, const OrbParameters& orbParams, const eSensor sensor, std::string const& mapFile = "");
+
+    ~System();
+
+    void setCameraParameters(const Camera& camParams);
+
+    void setOrbParameters(const OrbParameters& orbParams);
 
     // Proccess the given stereo frame. Images must be synchronized and rectified.
     // Input images: RGB (CV_8UC3) or grayscale (CV_8U). RGB is converted to grayscale.
@@ -112,15 +125,27 @@ public:
     // See format details at: http://www.cvlibs.net/datasets/kitti/eval_odometry.php
     void SaveTrajectoryKITTI(const string &filename);
 
-    // TODO: Save/Load functions
-    // SaveMap(const string &filename);
-    // LoadMap(const string &filename);
+    // Get Map points world position
+    const vector< ::cv::Mat > getMapPoints() const ;
+
+    // Get reference map points world position
+    const vector< ::cv::Mat > getRefMapPoints() const;
 
     // Information from most recent processed frame
     // You can call this right after TrackMonocular (or stereo or RGBD)
     int GetTrackingState();
     std::vector<MapPoint*> GetTrackedMapPoints();
     std::vector<cv::KeyPoint> GetTrackedKeyPointsUn();
+
+    void SaveMap(const string &filename);
+
+private:
+    // Save/Load functions
+    bool LoadMap(const string &filename);
+
+    void beforeTracking();
+
+    void afterTracking();
 
 private:
 
@@ -136,6 +161,8 @@ private:
     // Map structure that stores the pointers to all KeyFrames and MapPoints.
     Map* mpMap;
 
+    string mapfile;
+
     // Tracker. It receives a frame and computes the associated camera pose.
     // It also decides when to insert a new keyframe, create some new MapPoints and
     // performs relocalization if tracking fails.
@@ -147,12 +174,6 @@ private:
     // Loop Closer. It searches loops with every new keyframe. If there is a loop it performs
     // a pose graph optimization and full bundle adjustment (in a new thread) afterwards.
     LoopClosing* mpLoopCloser;
-
-    // The viewer draws the map and the current camera pose. It uses Pangolin.
-    Viewer* mpViewer;
-
-    FrameDrawer* mpFrameDrawer;
-    MapDrawer* mpMapDrawer;
 
     // System threads: Local Mapping, Loop Closing, Viewer.
     // The Tracking thread "lives" in the main execution thread that creates the System object.

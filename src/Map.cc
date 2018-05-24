@@ -20,12 +20,12 @@
 
 #include "Map.h"
 
-#include<mutex>
+#include <mutex>
 
 namespace ORB_SLAM2
 {
 
-Map::Map():mnMaxKFid(0),mnBigChangeIdx(0)
+Map::Map(): mnMaxKFid(0), mnBigChangeIdx(0)
 {
 }
 
@@ -129,5 +129,18 @@ void Map::clear()
     mvpReferenceMapPoints.clear();
     mvpKeyFrameOrigins.clear();
 }
+
+template<class Archive>
+void Map::serialize(Archive &ar, const unsigned int version)
+{
+    // don't save mutex
+    ar & mspMapPoints;
+    ar & mvpKeyFrameOrigins;
+    ar & mspKeyFrames;
+    ar & mvpReferenceMapPoints;
+    ar & mnMaxKFid & mnBigChangeIdx;
+}
+template void Map::serialize(boost::archive::binary_iarchive&, const unsigned int);
+template void Map::serialize(boost::archive::binary_oarchive&, const unsigned int);
 
 } //namespace ORB_SLAM

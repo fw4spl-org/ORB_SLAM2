@@ -21,7 +21,7 @@
 #include "KeyFrame.h"
 #include "Converter.h"
 #include "ORBmatcher.h"
-#include<mutex>
+#include <mutex>
 
 namespace ORB_SLAM2
 {
@@ -53,7 +53,7 @@ KeyFrame::KeyFrame(Frame &F, Map *pMap, KeyFrameDatabase *pKFDB):
             mGrid[i][j] = F.mGrid[i][j];
     }
 
-    SetPose(F.mTcw);    
+    SetPose(F.mTcw);
 }
 
 void KeyFrame::ComputeBoW()
@@ -153,7 +153,7 @@ void KeyFrame::UpdateBestCovisibles()
     }
 
     mvpOrderedConnectedKeyFrames = vector<KeyFrame*>(lKFs.begin(),lKFs.end());
-    mvOrderedWeights = vector<int>(lWs.begin(), lWs.end());    
+    mvOrderedWeights = vector<int>(lWs.begin(), lWs.end());
 }
 
 set<KeyFrame*> KeyFrame::GetConnectedKeyFrames()
@@ -393,8 +393,13 @@ void KeyFrame::EraseChild(KeyFrame *pKF)
 void KeyFrame::ChangeParent(KeyFrame *pKF)
 {
     unique_lock<mutex> lockCon(mMutexConnections);
-    mpParent = pKF;
-    pKF->AddChild(this);
+
+    if(pKF != this)
+    {
+        mpParent = pKF;
+        pKF->AddChild(this);
+    }
+
 }
 
 set<KeyFrame*> KeyFrame::GetChilds()
@@ -451,7 +456,8 @@ void KeyFrame::SetErase()
 }
 
 void KeyFrame::SetBadFlag()
-{   
+{
+
     {
         unique_lock<mutex> lock(mMutexConnections);
         if(mnId==0)
@@ -482,6 +488,7 @@ void KeyFrame::SetBadFlag()
 
         // Assign at each iteration one children with a parent (the pair with highest covisibility weight)
         // Include that children as new parent candidate for the rest
+
         while(!mspChildrens.empty())
         {
             bool bContinue = false;
@@ -531,7 +538,10 @@ void KeyFrame::SetBadFlag()
         if(!mspChildrens.empty())
             for(set<KeyFrame*>::iterator sit=mspChildrens.begin(); sit!=mspChildrens.end(); sit++)
             {
-                (*sit)->ChangeParent(mpParent);
+                if(mpParent != this)
+                {
+                    (*sit)->ChangeParent(mpParent);
+                }
             }
 
         mpParent->EraseChild(this);
@@ -542,6 +552,8 @@ void KeyFrame::SetBadFlag()
 
     mpMap->EraseKeyFrame(this);
     mpKeyFrameDB->erase(this);
+
+
 }
 
 bool KeyFrame::isBad()
@@ -661,5 +673,89 @@ float KeyFrame::ComputeSceneMedianDepth(const int q)
 
     return vDepths[(vDepths.size()-1)/q];
 }
+
+// Default serializing Constructor
+KeyFrame::KeyFrame():
+    mnFrameId(0),  mTimeStamp(0.0), mnGridCols(FRAME_GRID_COLS), mnGridRows(FRAME_GRID_ROWS),
+    mfGridElementWidthInv(0.0), mfGridElementHeightInv(0.0),
+    mnTrackReferenceForFrame(0), mnFuseTargetForKF(0), mnBALocalForKF(0), mnBAFixedForKF(0),
+    mnLoopQuery(0), mnLoopWords(0), mnRelocQuery(0), mnRelocWords(0), mnBAGlobalForKF(0),
+    fx(0.0), fy(0.0), cx(0.0), cy(0.0), invfx(0.0), invfy(0.0),
+    mbf(0.0), mb(0.0), mThDepth(0.0), N(0), mnScaleLevels(0), mfScaleFactor(0),
+    mfLogScaleFactor(0.0),
+    mnMinX(0), mnMinY(0), mnMaxX(0),
+    mnMaxY(0)
+{}
+template<class Archive>
+void KeyFrame::serialize(Archive &ar, const unsigned int version)
+{
+    // no mutex needed vars
+    ar & nNextId;
+    ar & mnId;
+    ar & const_cast<long unsigned int &>(mnFrameId);
+    ar & const_cast<double &>(mTimeStamp);
+    // Grid related vars
+    ar & const_cast<int &>(mnGridCols);
+    ar & const_cast<int &>(mnGridRows);
+    ar & const_cast<float &>(mfGridElementWidthInv);
+    ar & const_cast<float &>(mfGridElementHeightInv);
+    // Tracking related vars
+    ar & mnTrackReferenceForFrame & mnFuseTargetForKF;
+    // LocalMaping related vars
+    ar & mnBALocalForKF & mnBAFixedForKF;
+    // KeyFrameDB related vars
+    ar & mnLoopQuery & mnLoopWords & mLoopScore & mnRelocQuery & mnRelocWords & mRelocScore;
+    // LoopClosing related vars
+    ar & mTcwGBA & mTcwBefGBA & mnBAGlobalForKF;
+    // calibration parameters
+    ar & const_cast<float &>(fx) & const_cast<float &>(fy) & const_cast<float &>(cx) & const_cast<float &>(cy);
+    ar & const_cast<float &>(invfx) & const_cast<float &>(invfy) & const_cast<float &>(mbf);
+    ar & const_cast<float &>(mb) & const_cast<float &>(mThDepth);
+    // Number of KeyPoints;
+    ar & const_cast<int &>(N);
+    // KeyPoints, stereo coordinate and descriptors
+    ar & const_cast<std::vector<cv::KeyPoint> &>(mvKeys);
+    ar & const_cast<std::vector<cv::KeyPoint> &>(mvKeysUn);
+    ar & const_cast<std::vector<float> &>(mvuRight);
+    ar & const_cast<std::vector<float> &>(mvDepth);
+    ar & const_cast<cv::Mat &>(mDescriptors);
+    // Bow
+    ar & mBowVec & mFeatVec;
+    // Pose relative to parent
+    ar & mTcp;
+    // Scale related
+    ar & const_cast<int &>(mnScaleLevels) & const_cast<float &>(mfScaleFactor) & const_cast<float &>(mfLogScaleFactor);
+    ar & const_cast<std::vector<float> &>(mvScaleFactors) & const_cast<std::vector<float> &>(mvLevelSigma2) & const_cast<std::vector<float> &>(mvInvLevelSigma2);
+    // Image bounds and calibration
+    ar & const_cast<int &>(mnMinX) & const_cast<int &>(mnMinY) & const_cast<int &>(mnMaxX) & const_cast<int &>(mnMaxY);
+    ar & const_cast<cv::Mat &>(mK);
+
+    // mutex needed vars, but don't lock mutex in the save/load procedure
+    {
+        unique_lock<mutex> lock_pose(mMutexPose);
+        ar & Tcw & Twc & Ow & Cw;
+    }
+    {
+        unique_lock<mutex> lock_feature(mMutexFeatures);
+        ar & mvpMapPoints; // hope boost deal with the pointer graph well
+    }
+    // BoW
+    ar & mpKeyFrameDB;
+    // mpORBvocabulary restore elsewhere(see SetORBvocab)
+    {
+        // Grid related
+        unique_lock<mutex> lock_connection(mMutexConnections);
+        ar & mGrid & mConnectedKeyFrameWeights & mvpOrderedConnectedKeyFrames & mvOrderedWeights;
+        // Spanning Tree and Loop Edges
+        ar & mbFirstConnection & mpParent & mspChildrens & mspLoopEdges;
+        // Bad flags
+        ar & mbNotErase & mbToBeErased & mbBad & mHalfBaseline;
+    }
+    // Map Points
+    ar & mpMap;
+    // don't save mutex
+}
+template void KeyFrame::serialize(boost::archive::binary_iarchive&, const unsigned int);
+template void KeyFrame::serialize(boost::archive::binary_oarchive&, const unsigned int);
 
 } //namespace ORB_SLAM

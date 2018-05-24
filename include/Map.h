@@ -23,10 +23,13 @@
 
 #include "MapPoint.h"
 #include "KeyFrame.h"
+#include "orb_slam2_export.h"
+
 #include <set>
 
 #include <mutex>
 
+#include "BoostArchiver.h"
 
 
 namespace ORB_SLAM2
@@ -35,7 +38,7 @@ namespace ORB_SLAM2
 class MapPoint;
 class KeyFrame;
 
-class Map
+class ORB_SLAM2_EXPORT Map
 {
 public:
     Map();
@@ -65,6 +68,13 @@ public:
 
     // This avoid that two points are created simultaneously in separate threads (id conflict)
     std::mutex mMutexPointCreation;
+
+
+private:
+    // serialize is recommended to be private
+    friend class boost::serialization::access;
+    template<class Archive>
+    void serialize(Archive &ar, const unsigned int version);
 
 protected:
     std::set<MapPoint*> mspMapPoints;

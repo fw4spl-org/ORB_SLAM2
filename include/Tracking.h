@@ -25,8 +25,6 @@
 #include<opencv2/core/core.hpp>
 #include<opencv2/features2d/features2d.hpp>
 
-#include"Viewer.h"
-#include"FrameDrawer.h"
 #include"Map.h"
 #include"LocalMapping.h"
 #include"LoopClosing.h"
@@ -35,8 +33,9 @@
 #include"KeyFrameDatabase.h"
 #include"ORBextractor.h"
 #include "Initializer.h"
-#include "MapDrawer.h"
 #include "System.h"
+#include "orb_slam2_export.h"
+#include "Utils.h"
 
 #include <mutex>
 
@@ -50,12 +49,21 @@ class LocalMapping;
 class LoopClosing;
 class System;
 
-class Tracking
-{  
+class ORB_SLAM2_EXPORT Tracking
+{
 
 public:
-    Tracking(System* pSys, ORBVocabulary* pVoc, FrameDrawer* pFrameDrawer, MapDrawer* pMapDrawer, Map* pMap,
-             KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor);
+
+    Tracking(System* pSys, ORBVocabulary* pVoc, Map* pMap,
+             KeyFrameDatabase* pKFDB, const string &strSettingPath, const int sensor, bool bReuseMap=false);
+
+    Tracking(System* pSys, ORBVocabulary* pVoc, Map* pMap,
+             KeyFrameDatabase* pKFDB, const Camera& camParams, const OrbParameters& orbParams,
+             const int sensor, bool bReuseMap = false);
+
+    ~Tracking();
+
+    void setOrbParameters(const OrbParameters& orbParams);
 
     // Preprocess the input and call Track(). Extract features and performs stereo matching.
     cv::Mat GrabImageStereo(const cv::Mat &imRectLeft,const cv::Mat &imRectRight, const double &timestamp);
@@ -64,16 +72,19 @@ public:
 
     void SetLocalMapper(LocalMapping* pLocalMapper);
     void SetLoopClosing(LoopClosing* pLoopClosing);
-    void SetViewer(Viewer* pViewer);
 
     // Load new settings
     // The focal lenght should be similar or scale prediction will fail when projecting points
     // TODO: Modify MapPoint::PredictScale to take into account focal lenght
     void ChangeCalibration(const string &strSettingPath);
 
+    // Load new settings from camera structure
+    // The focal lenght should be similar or scale prediction will fail when projecting points
+    // TODO: Modify MapPoint::PredictScale to take into account focal lenght
+    void ChangeCalibration(const Camera &camParams);
+
     // Use this function if you have deactivated local mapping and you only want to localize the camera.
     void InformOnlyTracking(const bool &flag);
-
 
 public:
 
@@ -169,14 +180,9 @@ protected:
     KeyFrame* mpReferenceKF;
     std::vector<KeyFrame*> mvpLocalKeyFrames;
     std::vector<MapPoint*> mvpLocalMapPoints;
-    
+
     // System
     System* mpSystem;
-    
-    //Drawers
-    Viewer* mpViewer;
-    FrameDrawer* mpFrameDrawer;
-    MapDrawer* mpMapDrawer;
 
     //Map
     Map* mpMap;

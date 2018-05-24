@@ -26,9 +26,10 @@
 #include "LoopClosing.h"
 #include "Tracking.h"
 #include "KeyFrameDatabase.h"
+#include "orb_slam2_export.h"
 
 #include <mutex>
-
+#include <condition_variable>
 
 namespace ORB_SLAM2
 {
@@ -37,7 +38,7 @@ class Tracking;
 class LoopClosing;
 class Map;
 
-class LocalMapping
+class ORB_SLAM2_EXPORT LocalMapping
 {
 public:
     LocalMapping(Map* pMap, const float bMonocular);
@@ -52,20 +53,18 @@ public:
     void InsertKeyFrame(KeyFrame* pKF);
 
     // Thread Synch
-    void RequestStop();
-    void RequestReset();
-    bool Stop();
-    void Release();
+    void stop();
     bool isStopped();
-    bool stopRequested();
+    void release();
+
+    void finish();
+
+    void reset();
+
     bool AcceptKeyFrames();
     void SetAcceptKeyFrames(bool flag);
     bool SetNotStop(bool flag);
-
     void InterruptBA();
-
-    void RequestFinish();
-    bool isFinished();
 
     int KeyframesInQueue(){
         unique_lock<std::mutex> lock(mMutexNewKFs);
@@ -92,10 +91,9 @@ protected:
     void ResetIfRequested();
     bool mbResetRequested;
     std::mutex mMutexReset;
+    std::condition_variable mCondReset;
 
-    bool CheckFinish();
-    void SetFinish();
-    bool mbFinishRequested;
+    bool CheckFinish(); 
     bool mbFinished;
     std::mutex mMutexFinish;
 
@@ -115,9 +113,11 @@ protected:
     bool mbAbortBA;
 
     bool mbStopped;
-    bool mbStopRequested;
     bool mbNotStop;
+    int mStopRequest;
     std::mutex mMutexStop;
+    std::condition_variable mCondStopRequest;
+    std::condition_variable mCondStop;
 
     bool mbAcceptKeyFrames;
     std::mutex mMutexAccept;

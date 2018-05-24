@@ -23,6 +23,7 @@
 #include<algorithm>
 #include<fstream>
 #include<chrono>
+#include<thread>
 
 #include<opencv2/core/core.hpp>
 
@@ -37,7 +38,7 @@ int main(int argc, char **argv)
 {
     if(argc != 4)
     {
-        cerr << endl << "Usage: ./mono_tum path_to_vocabulary path_to_settings path_to_sequence" << endl;
+        cerr << endl << "Usage: ./mono_tum path_to_vocabulary path_to_settings path_to_sequence" << endl; 
         return 1;
     }
 
@@ -47,10 +48,10 @@ int main(int argc, char **argv)
     string strFile = string(argv[3])+"/rgb.txt";
     LoadImages(strFile, vstrImageFilenames, vTimestamps);
 
-    int nImages = vstrImageFilenames.size();
+    size_t nImages = vstrImageFilenames.size();
 
     // Create SLAM system. It initializes all system threads and gets ready to process frames.
-    ORB_SLAM2::System SLAM(argv[1],argv[2],ORB_SLAM2::System::MONOCULAR,true);
+    ORB_SLAM2::System SLAM(argv[1],argv[2],ORB_SLAM2::System::MONOCULAR);
 
     // Vector for tracking time statistics
     vector<float> vTimesTrack;
@@ -62,7 +63,7 @@ int main(int argc, char **argv)
 
     // Main loop
     cv::Mat im;
-    for(int ni=0; ni<nImages; ni++)
+    for(size_t ni=0; ni<nImages; ni++)
     {
         // Read image from file
         im = cv::imread(string(argv[3])+"/"+vstrImageFilenames[ni],CV_LOAD_IMAGE_UNCHANGED);
@@ -102,7 +103,7 @@ int main(int argc, char **argv)
             T = tframe-vTimestamps[ni-1];
 
         if(ttrack<T)
-            usleep((T-ttrack)*1e6);
+            std::this_thread::sleep_for(std::chrono::microseconds(static_cast<size_t>((T-ttrack)*1e6)));
     }
 
     // Stop all threads

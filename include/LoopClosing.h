@@ -26,12 +26,13 @@
 #include "Map.h"
 #include "ORBVocabulary.h"
 #include "Tracking.h"
-
+#include "orb_slam2_export.h"
 #include "KeyFrameDatabase.h"
 
 #include <thread>
 #include <mutex>
-#include "Thirdparty/g2o/g2o/types/types_seven_dof_expmap.h"
+#include <g2o/types/types_seven_dof_expmap.h>
+#include <condition_variable>
 
 namespace ORB_SLAM2
 {
@@ -41,13 +42,13 @@ class LocalMapping;
 class KeyFrameDatabase;
 
 
-class LoopClosing
+class ORB_SLAM2_EXPORT LoopClosing
 {
 public:
 
     typedef pair<set<KeyFrame*>,int> ConsistentGroup;    
     typedef map<KeyFrame*,g2o::Sim3,std::less<KeyFrame*>,
-        Eigen::aligned_allocator<std::pair<const KeyFrame*, g2o::Sim3> > > KeyFrameAndPose;
+        Eigen::aligned_allocator<std::pair<KeyFrame* const, g2o::Sim3> > > KeyFrameAndPose;
 
 public:
 
@@ -62,23 +63,15 @@ public:
 
     void InsertKeyFrame(KeyFrame *pKF);
 
-    void RequestReset();
+    void reset();
 
-    // This function will run in a separate thread
+    void stop();
+    void release();
+
+    // This function will run in a separate thread 
     void RunGlobalBundleAdjustment(unsigned long nLoopKF);
 
-    bool isRunningGBA(){
-        unique_lock<std::mutex> lock(mMutexGBA);
-        return mbRunningGBA;
-    }
-    bool isFinishedGBA(){
-        unique_lock<std::mutex> lock(mMutexGBA);
-        return mbFinishedGBA;
-    }   
-
-    void RequestFinish();
-
-    bool isFinished();
+    void finish();
 
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
 
@@ -97,12 +90,26 @@ protected:
     void ResetIfRequested();
     bool mbResetRequested;
     std::mutex mMutexReset;
+    std::condition_variable mCondReset;
 
-    bool CheckFinish();
-    void SetFinish();
-    bool mbFinishRequested;
+    bool CheckFinish(); 
     bool mbFinished;
     std::mutex mMutexFinish;
+
+    bool isRunningGBA(){ 
+        unique_lock<std::mutex> lock(mMutexGBA); 
+        return mbRunningGBA; 
+    } 
+    bool isFinishedGBA(){ 
+        unique_lock<std::mutex> lock(mMutexGBA); 
+        return mbFinishedGBA; 
+    }
+
+    bool isStopped();
+    bool mbStopped;
+    std::mutex mMutexStop;
+    std::condition_variable mCondStopRequest;
+    std::condition_variable mCondStop;
 
     Map* mpMap;
     Tracking* mpTracker;
@@ -143,7 +150,7 @@ protected:
     bool mbFixScale;
 
 
-    bool mnFullBAIdx;
+    int mnFullBAIdx;
 };
 
 } //namespace ORB_SLAM
